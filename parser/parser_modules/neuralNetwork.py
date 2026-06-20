@@ -63,12 +63,11 @@ def build_neural_network(module_name, settings):
         loss = "'sparse_categorical_crossentropy'"
         metric = "'accuracy'"
 
-    input_layer = f"""
-# --- Genereerde Keras Code ---
-import tensorflow as tf
+    imports = f"""
 from tensorflow.keras import layers, models
-import numpy as np
+"""
 
+    input_layer = f"""
 {name} = models.Sequential([
     layers.Input(shape=({dataset_name}_X_train.shape[1],)),
 """
@@ -111,4 +110,4 @@ import numpy as np
 """
 
     model_code += model_compile_and_train
-    return model_code
+    return [imports,model_code]

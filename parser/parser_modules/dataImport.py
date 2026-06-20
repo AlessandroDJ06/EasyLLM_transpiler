@@ -8,6 +8,7 @@ def build_dataset(module_name, settings):
     target_column = ""
     random_state = ""
     task_type = "regression"
+    allow_debug_prints=False
 
     for setting in settings:
         s_name = setting['setting'].strip()
@@ -37,38 +38,50 @@ def build_dataset(module_name, settings):
             else:
                 raise ValueError(f"Error in {module_name}: random_state must be an integer")
         elif s_name in ['type', 'task']:
-            if s_val in ['regression', 'classification']:
+            if s_val in ['regression', 'classification', 'association_rules']:
                 task_type = s_val
             else:
-                raise ValueError(f"Error in {module_name}: task must be either regression or classification")
+                raise ValueError(f"Error in {module_name}: task must be either regression, classification or association_rules")
 
-    if task_type == 'regression':
-        target_processing = f"    {name}_y = {name}_df['{target_column}'].values.astype(np.float32)\n"
+    if task_type != 'association_rules' and not target_column:
+        raise ValueError(f"Error in {module_name}: target column is required for {task_type}")
+
+    if task_type == 'association_rules':
+        processing_code = f"""
+    {name}_df_cleaned = {name}_df.astype(str).apply(lambda x: x.str.strip())
+    {name}_X = pd.get_dummies({name}_df_cleaned, dtype=bool)
+"""
     else:
-        target_processing = f"    {name}_y = pd.factorize({name}_df['{target_column}'])[0].astype(np.float32)\n"
+        if task_type == 'regression':
+            target_processing = f"{name}_y = {name}_df['{target_column}'].values.astype(np.float32)\n"
+        else:
+            target_processing = f"{name}_y = pd.factorize({name}_df['{target_column}'])[0].astype(np.float32)\n"
 
-    feature_processing = f"""
+        feature_processing = f"""
     features_df = {name}_df.drop(columns=['{target_column}'])
     features_df = pd.get_dummies(features_df, drop_first=True)
     {name}_X = features_df.values.astype(np.float32)
 """
 
-    if random_state != "":
-        random_statecode = f"""
+        if random_state != "":
+            random_statecode = f"""
     {name}_X_train, {name}_X_test, {name}_Y_train, {name}_Y_test = train_test_split({name}_X, {name}_y, test_size={split}, random_state={random_state})
 """
-    else:
-        random_statecode = f"""
+        else:
+            random_statecode = f"""
     {name}_X_train, {name}_X_test, {name}_Y_train, {name}_Y_test = train_test_split({name}_X, {name}_y, test_size={split})
 """
+        processing_code = target_processing + feature_processing + random_statecode
 
-    code_blok = f"""
-# Settings for dataset: {name}
+    imports = f"""
 import numpy as np 
 import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
+"""
 
+
+    code_blok = f"""
 {name}_path = "{source}"
 {name}_batch_size = {batch_size}
 {name}_split = {split}
@@ -80,14 +93,20 @@ else:
     print(f"Dataset {name} loaded from : {{{name}_path}}")
     {name}_df = pd.read_csv({name}_path, sep='{seperator}', on_bad_lines='skip')
     {name}_df.columns = {name}_df.columns.str.strip()
+"""
+    debug_prints = [f"""
     print(f"rows before cleanup: {{len({name}_df)}}")
+""",f"""
+    print(f"rows after cleanup: {{len({name}_df)}}")
+"""]
+    cleanup_code = f"""
     {name}_df = {name}_df.replace([np.inf, -np.inf], np.nan)
     {name}_df = {name}_df.dropna()
-    print(f"rows after cleanup: {{len({name}_df)}}")
-"""
-
-    code_blok += target_processing + feature_processing + random_statecode
+    """
+    if allow_debug_prints:
+        code_blok += debug_prints[0] + cleanup_code + debug_prints[1] + processing_code
+    else:
+        code_blok += cleanup_code + processing_code
 
     dataset_code += code_blok
-
-    return dataset_code
+    return [imports,dataset_code]
